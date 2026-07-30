@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, Map, Menu, SlidersHorizontal } from "lucide-react";
 import demandData from "./data/demand.json";
+import localityData from "./data/localities.json";
 import DemandMap from "./components/DemandMap";
 import InfoDialog from "./components/InfoDialog";
 import KpiStrip from "./components/KpiStrip";
@@ -11,7 +12,13 @@ import SideNavigation from "./components/SideNavigation";
 import SimulatorPanel from "./components/SimulatorPanel";
 import TopBar from "./components/TopBar";
 import { formatNumber, formatPercent } from "./lib/format";
-import { findBestIntermediatePoint, simulateBase } from "./lib/simulation";
+import { fetchRoadMatrix, fetchRoadRoutes } from "./lib/routing";
+import {
+  distanceInKm,
+  findBestIntermediatePoint,
+  findNearestValidLocality,
+  simulateBase,
+} from "./lib/simulation";
 
 const topDefault = demandData.opportunities.find((item) => item.id === "loc-2") ?? demandData.opportunities[0];
 const STORAGE_KEY = "nodo-scenarios-v2";
@@ -67,6 +74,8 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [mobileMode, setMobileMode] = useState("Mapa");
   const [scenarios, setScenarios] = useState(readScenarios);
+  const [roadState, setRoadState] = useState({ key: "", status: "idle", matrix: null, provider: "", error: "" });
+  const [routeLines, setRouteLines] = useState([]);
   const toastTimer = useRef(null);
 
   const provinces = useMemo(
@@ -93,14 +102,79 @@ export default function App() {
 
   const rankedOpportunities = filteredOpportunities.slice(0, 60);
   const recommendedPoint = useMemo(
-    () => findBestIntermediatePoint(demandData.opportunities, radiusKm, capturePercent),
+    () => findBestIntermediatePoint(
+      demandData.opportunities,
+      localityData.localities,
+      radiusKm,
+      capturePercent,
+    ),
     [radiusKm, capturePercent],
   );
   const activeProposal = proposalMode === "free" ? customPoint ?? recommendedPoint : selected;
-  const simulation = useMemo(
-    () => simulateBase(demandData.opportunities, activeProposal, radiusKm, capturePercent),
-    [activeProposal, radiusKm, capturePercent],
+  const roadCandidates = useMemo(
+    () => activeProposal
+      ? demandData.opportunities.filter(
+          (item) => item.lat != null && item.lng != null && distanceInKm(activeProposal, item) <= radiusKm,
+        )
+      : [],
+    [activeProposal, radiusKm],
   );
+  const roadRequestKey = activeProposal
+    ? `${activeProposal.id}:${activeProposal.lat.toFixed(5)}:${activeProposal.lng.toFixed(5)}:${roadCandidates.map((item) => item.id).join(",")}`
+    : "";
+  const roadDistances = roadState.key === roadRequestKey && roadState.status === "ready"
+    ? roadState.matrix?.[activeProposal?.id] ?? {}
+    : null;
+  const simulation = useMemo(
+    () => simulateBase(
+      demandData.opportunities,
+      activeProposal,
+      radiusKm,
+      capturePercent,
+      roadDistances ? { roadDistances, strictRoad: true } : undefined,
+    ),
+    [activeProposal, capturePercent, radiusKm, roadDistances],
+  );
+  const routingStatus = roadState.key !== roadRequestKey ? "loading" : roadState.status;
+
+  useEffect(() => {
+    if (!activeProposal || !roadRequestKey) return undefined;
+    const controller = new AbortController();
+
+    if (!roadCandidates.length) {
+      setRoadState({ key: roadRequestKey, status: "ready", matrix: { [activeProposal.id]: {} }, provider: "OSRM / OpenStreetMap", error: "" });
+      return () => controller.abort();
+    }
+
+    setRoadState((current) => ({ ...current, key: roadRequestKey, status: "loading", error: "" }));
+    fetchRoadMatrix([activeProposal], roadCandidates, controller.signal)
+      .then((payload) => {
+        setRoadState({ key: roadRequestKey, status: "ready", matrix: payload.matrix, provider: payload.provider, error: "" });
+      })
+      .catch((error) => {
+        if (error.name === "AbortError") return;
+        setRoadState({ key: roadRequestKey, status: "fallback", matrix: null, provider: "", error: error.message });
+      });
+
+    return () => controller.abort();
+  }, [activeProposal, roadCandidates, roadRequestKey]);
+
+  const routeDestinationKey = simulation.coveredLocalities.slice(0, 4).map((item) => item.id).join(",");
+  useEffect(() => {
+    if (routingStatus !== "ready" || !activeProposal || !routeDestinationKey) {
+      setRouteLines([]);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const destinations = simulation.coveredLocalities.slice(0, 4);
+    fetchRoadRoutes(activeProposal, destinations, controller.signal)
+      .then((payload) => setRouteLines(payload.routes))
+      .catch((error) => {
+        if (error.name !== "AbortError") setRouteLines([]);
+      });
+    return () => controller.abort();
+  }, [activeProposal, routeDestinationKey, routingStatus, simulation.coveredLocalities]);
 
   function notify(message) {
     window.clearTimeout(toastTimer.current);
@@ -121,16 +195,14 @@ export default function App() {
   }
 
   function placeIntermediatePoint({ lat, lng }) {
-    setCustomPoint({
-      id: `manual-${lat.toFixed(5)}-${lng.toFixed(5)}`,
-      locality: "Punto intermedio manual",
-      province: "Ubicación libre",
-      lat,
-      lng,
-      isIntermediate: true,
-      placementSource: "manual",
-    });
+    const validPoint = findNearestValidLocality(localityData.localities, { lat, lng });
+    if (!validPoint) {
+      notify("No se encontró una localidad válida cerca de ese punto.");
+      return;
+    }
+    setCustomPoint(validPoint);
     setProposalMode("free");
+    notify(`Base ajustada a ${validPoint.locality}, ${validPoint.province}.`);
   }
 
   function useRecommendedPoint() {
@@ -140,7 +212,7 @@ export default function App() {
     }
     setCustomPoint(null);
     setProposalMode("free");
-    notify("Se aplicó el punto intermedio con mayor ahorro estimado.");
+    notify(`Se aplicó ${recommendedPoint.locality}, la localidad multinodo sugerida.`);
   }
 
   function selectById(id) {
@@ -172,6 +244,8 @@ export default function App() {
       reachedTrips: simulation.reachedTrips,
       coveredLocalities: simulation.coveredLocalities.length,
       capturedNodeNames: simulation.coveredLocalities.slice(0, 6).map((item) => item.locality),
+      distanceMode: simulation.distanceMode,
+      routeProvider: roadState.provider,
     };
     persistScenarios([scenario, ...scenarios].slice(0, 24));
     notify(proposalMode === "free" ? "Escenario de punto intermedio guardado." : `Escenario de ${selected.locality} guardado.`);
@@ -179,15 +253,12 @@ export default function App() {
 
   function applyScenario(scenario) {
     if (scenario.proposalMode === "free" && scenario.lat != null && scenario.lng != null) {
-      setCustomPoint({
-        id: `scenario-${scenario.id}`,
-        locality: scenario.locality,
-        province: scenario.province,
-        lat: scenario.lat,
-        lng: scenario.lng,
-        isIntermediate: true,
-        placementSource: scenario.placementSource ?? "saved",
-      });
+      const validPoint = findNearestValidLocality(localityData.localities, scenario);
+      if (!validPoint) {
+        notify("El escenario anterior no está cerca de una localidad oficial y no puede aplicarse.");
+        return;
+      }
+      setCustomPoint({ ...validPoint, id: `scenario-${scenario.id}`, placementSource: "saved" });
       setProposalMode("free");
     } else {
       const opportunity = demandData.opportunities.find((item) => item.id === scenario.selectedId)
@@ -249,6 +320,8 @@ export default function App() {
     radiusKm,
     capturePercent,
     simulation,
+    routingStatus,
+    routeProvider: roadState.provider,
     onSelectById: selectById,
     onProposalModeChange: changeProposalMode,
     onUseRecommendedPoint: useRecommendedPoint,
@@ -333,13 +406,15 @@ export default function App() {
                 proposalMode={proposalMode}
                 coveredLocalities={simulation.coveredLocalities}
                 onPlacePoint={placeIntermediatePoint}
+                routeLines={routeLines}
+                routingStatus={routingStatus}
               />
               <div className="desktop-simulator"><SimulatorPanel {...simulatorProps} /></div>
               <div className="mobile-simulator"><SimulatorPanel compact {...simulatorProps} /></div>
             </section>
 
             <footer className="source-footer">
-              <span>Fuente: Excel operativo · {demandData.meta.period} · {formatPercent(demandData.meta.coordinateCoveragePercent)} geolocalizado</span>
+              <span>Fuente: Excel operativo · Localidades Georef · Rutas OSRM/OpenStreetMap · {demandData.meta.period}</span>
               <button type="button" onClick={() => setShowMethodology(true)}>Ver metodología</button>
             </footer>
           </>
@@ -375,7 +450,7 @@ export default function App() {
       )}
       {showHelp && (
         <InfoDialog title="Cómo usar Nodo" eyebrow="Ayuda rápida" onClose={() => setShowHelp(false)}>
-          <ol className="help-steps"><li><b>Elegí el tipo de ubicación</b><span>una localidad o un punto intermedio libre.</span></li><li><b>Ubicá la base</b><span>usá la sugerencia o hacé clic en cualquier lugar del mapa.</span></li><li><b>Ajustá la cobertura</b><span>definí radio y captura esperada.</span></li><li><b>Compará, guardá y exportá</b><span>revisá los nodos capturados y retomá escenarios desde Reportes.</span></li></ol>
+          <ol className="help-steps"><li><b>Elegí el tipo de ubicación</b><span>una localidad de demanda o una localidad intermedia.</span></li><li><b>Ubicá la base</b><span>usá la sugerencia o hacé clic: el punto se ajustará a la localidad oficial más cercana.</span></li><li><b>Ajustá la cobertura</b><span>el radio se verifica con kilómetros reales por ruta.</span></li><li><b>Compará, guardá y exportá</b><span>revisá distancias, tiempos y nodos capturados.</span></li></ol>
         </InfoDialog>
       )}
       {toast && <div className="toast" role="status">{toast}</div>}
