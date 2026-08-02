@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "node scripts/clean-dist.mjs && vite build && node scripts/prepare-sites.mjs",
-    "preview": "vite preview --host 127.0.0.1"
+    "build:pages": "node scripts/clean-dist.mjs && vite build --mode pages",
+    "preview": "vite preview --host 127.0.0.1",
+    "preview:pages": "vite preview --mode pages --host 127.0.0.1 --port 4180"
   },
   "dependencies": {
     "leaflet": "latest",

@@ -33,13 +33,18 @@ function routingApi() {
   };
 }
 
-export default defineConfig({
-  plugins: [react(), routingApi()],
-  build: {
-    outDir: "dist/client",
-  },
-  server: {
-    host: "127.0.0.1",
-    port: 4173,
-  },
+export default defineConfig(({ mode }) => {
+  const isGitHubPages = mode === "pages";
+
+  return {
+    base: isGitHubPages ? "/nodo-planificacion-remises/" : "/",
+    plugins: [react(), routingApi()],
+    build: {
+      outDir: isGitHubPages ? "dist/pages" : "dist/client",
+    },
+    server: {
+      host: "127.0.0.1",
+      port: 4173,
+    },
+  };
 });

@@ -2,6 +2,10 @@
 
 Aplicación React + Vite para analizar demanda, kilómetros excedentes y simular el impacto de nuevas bases de remises sobre un mapa de Argentina.
 
+## Demo pública
+
+[Abrir Nodo en GitHub Pages](https://walterdif20.github.io/nodo-planificacion-remises/)
+
 ## Funcionalidad
 
 - Mapa nacional de oportunidades y bases existentes.
