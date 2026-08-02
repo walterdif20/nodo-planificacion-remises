@@ -38,6 +38,8 @@ export default function SimulatorPanel({
   radiusKm,
   capturePercent,
   simulation,
+  routingStatus,
+  routeProvider,
   onSelectById,
   onProposalModeChange,
   onUseRecommendedPoint,
@@ -104,8 +106,8 @@ export default function SimulatorPanel({
           <div>
             <Crosshair size={18} />
             <span>
-              <strong>{selected?.placementSource === "recommended" ? "Punto sugerido" : "Punto manual"}</strong>
-              <small>{selected ? `${selected.lat.toFixed(4)}, ${selected.lng.toFixed(4)}` : "Elegí una posición en el mapa"}</small>
+              <strong>{selected ? `${selected.locality}, ${selected.province}` : "Elegí una localidad"}</strong>
+              <small>{selected?.placementSource === "recommended" ? "Localidad oficial sugerida para varios nodos" : "Localidad oficial validada"}</small>
             </span>
           </div>
           <button type="button" onClick={onUseRecommendedPoint} disabled={!recommendedPoint}>
@@ -153,6 +155,22 @@ export default function SimulatorPanel({
         onChange={onCaptureChange}
       />
 
+      <div className={`routing-status is-${routingStatus}`} role="status">
+        <Route size={15} />
+        <span>
+          <strong>
+            {routingStatus === "ready" && "Distancia vial real"}
+            {routingStatus === "loading" && "Calculando por rutas…"}
+            {routingStatus === "fallback" && "Estimación temporal"}
+          </strong>
+          {!compact && (
+            <small>
+              {routingStatus === "ready" ? `${routeProvider} · traza y tiempo de viaje` : routingStatus === "loading" ? "Revisando qué nodos entran en el radio vial" : "No se pudo consultar la red vial; se muestra distancia geográfica"}
+            </small>
+          )}
+        </span>
+      </div>
+
       <section className="impact-section" aria-live="polite">
         <h3>Impacto estimado</h3>
         <div className="impact-metrics">
@@ -181,7 +199,7 @@ export default function SimulatorPanel({
             {simulation.coveredLocalities.slice(0, 4).map((item) => (
               <div key={item.id}>
                 <span><strong>{item.locality}</strong><small>{item.province}</small></span>
-                <b>{formatNumber(item.distanceKm, 1)} km</b>
+                <b>{formatNumber(item.distanceKm, 1)} km{item.durationMinutes != null ? ` · ${formatNumber(item.durationMinutes)} min` : ""}</b>
               </div>
             ))}
           </div>

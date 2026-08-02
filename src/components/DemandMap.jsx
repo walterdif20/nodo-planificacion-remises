@@ -47,6 +47,8 @@ export default function DemandMap({
   proposalMode,
   coveredLocalities,
   onPlacePoint,
+  routeLines,
+  routingStatus,
 }) {
   const isIntermediateMode = proposalMode === "free";
   const coveredIds = useMemo(
@@ -153,17 +155,20 @@ export default function DemandMap({
             );
           })}
 
-        {isIntermediateMode && selected?.lat != null && selected?.lng != null &&
-          coveredLocalities.slice(0, 24).map((opportunity) => (
+        {routeLines.map((route, index) => (
             <Polyline
-              interactive={false}
-              key={`capture-${opportunity.id}`}
-              positions={[
-                [selected.lat, selected.lng],
-                [opportunity.lat, opportunity.lng],
-              ]}
-              pathOptions={{ color: "#6f7b65", opacity: 0.48, weight: 1.35 }}
-            />
+              interactive
+              key={`route-${route.id}`}
+              positions={route.positions}
+              pathOptions={{ color: index === 0 ? "#43523e" : "#75816c", opacity: 0.8, weight: index === 0 ? 3.2 : 2.2 }}
+            >
+              <Tooltip className="map-tooltip" sticky>
+                <div className="tooltip-content compact">
+                  <strong>Ruta a {route.locality}</strong>
+                  <span>{formatNumber(route.distanceKm, 1)} km · {formatNumber(route.durationMinutes)} min</span>
+                </div>
+              </Tooltip>
+            </Polyline>
           ))}
 
         {existingBases.map((base) => {
@@ -211,8 +216,8 @@ export default function DemandMap({
               >
                 <Tooltip className="map-tooltip" direction="top" offset={[0, -8]} permanent>
                   <div className="tooltip-content compact">
-                    <strong>Punto intermedio</strong>
-                    <span>{coveredLocalities.length} nodos dentro del radio</span>
+                    <strong>{selected.locality}</strong>
+                    <span>Localidad validada · {coveredLocalities.length} nodos por ruta</span>
                   </div>
                 </Tooltip>
               </CircleMarker>
@@ -243,8 +248,13 @@ export default function DemandMap({
         )}
       </div>
       {isIntermediateMode && (
-        <div className="map-placement-hint">Elegí un punto en el mapa</div>
+        <div className="map-placement-hint">Elegí una zona: se ajustará a una localidad válida</div>
       )}
+      <div className={`map-routing-badge is-${routingStatus}`}>
+        {routingStatus === "ready" && `${routeLines.length} rutas principales`}
+        {routingStatus === "loading" && "Calculando rutas reales…"}
+        {routingStatus === "fallback" && "Ruta no disponible · estimación geográfica"}
+      </div>
       <div className="map-quality-badge" title="Cobertura geográfica validada">
         {opportunities.filter((item) => item.lat != null && item.lng != null).length}/{opportunities.length} ubicadas
       </div>
